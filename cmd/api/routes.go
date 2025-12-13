@@ -17,6 +17,7 @@ func (app *application) routes() http.Handler {
 	router.HandlerFunc(http.MethodPost, "/v1/flashcards", app.createFlashcardHandler)
 	router.HandlerFunc(http.MethodGet, "/v1/flashcards/:id", app.showFlashcardHandler)
 	router.HandlerFunc(http.MethodPut, "/v1/flashcards/:id", app.updateFlashcardHandler)
+	router.HandlerFunc(http.MethodDelete, "/v1/flashcards/:id", app.deleteFlashcardHandler)
 
 	return app.recoverPanic(router)
 }
