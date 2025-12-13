@@ -215,7 +215,12 @@ func (app *application) updateFlashcardHandler(w http.ResponseWriter, r *http.Re
 
 	err = app.models.Flashcards.Update(flashcard)
 	if err != nil {
-		app.serverErrorResponse(w, r, err)
+		switch {
+		case errors.Is(err, data.ErrEditConflict):
+			app.editConflictResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
 		return
 	}
 
