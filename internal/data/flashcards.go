@@ -175,7 +175,40 @@ func (m FlashcardModel) Get(id int64) (*Flashcard, error) {
 }
 
 func (m FlashcardModel) Update(flashcard *Flashcard) error {
-	return nil
+	contentJSON, err := json.Marshal(flashcard.Content)
+	if err != nil {
+		return fmt.Errorf("failed to marshal flashcard content: %w", err)
+	}
+
+	query := `
+		UPDATE flashcards
+		SET 
+			section = $1,
+			section_type = $2,
+			source_file = $3,
+			text = $4,
+			question = $5,
+			flashcard_type = $6,
+			flashcard_content = $7,
+			categories = $8,
+			version = version + 1
+		WHERE id = $9
+		RETURNING version
+	`
+
+	args := []any{
+		flashcard.Section,
+		flashcard.SectionType,
+		flashcard.SourceFile,
+		flashcard.Text,
+		flashcard.Question,
+		flashcard.Type,
+		contentJSON,
+		pq.Array(flashcard.Categories),
+		flashcard.ID,
+	}
+
+	return m.DB.QueryRow(query, args...).Scan(&flashcard.Version)
 }
 
 func (m FlashcardModel) Delete(id int64) error {

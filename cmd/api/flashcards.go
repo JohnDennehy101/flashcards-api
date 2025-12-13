@@ -129,3 +129,98 @@ func (app *application) showFlashcardHandler(w http.ResponseWriter, r *http.Requ
 		app.serverErrorResponse(w, r, err)
 	}
 }
+
+func (app *application) updateFlashcardHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	flashcard, err := app.models.Flashcards.Get(id)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	var input struct {
+		Section     *string            `json:"section"`
+		SectionType *string            `json:"section_type"`
+		SourceFile  *string            `json:"source_file"`
+		Text        string             `json:"text"`
+		Question    string             `json:"question"`
+		Type        data.FlashcardType `json:"flashcard_type"`
+		Content     json.RawMessage    `json:"flashcard_content"`
+		Categories  []string           `json:"categories"`
+		Version     int32              `json:"version"`
+	}
+
+	err = app.readJSON(w, r, &input)
+	if err != nil {
+		app.badRequestResponse(w, r, err)
+		return
+	}
+
+	var content data.FlashcardContent
+	switch input.Type {
+	case data.FlashcardQA:
+		var qa data.QAContent
+		if err := json.Unmarshal(input.Content, &qa); err != nil {
+			app.errorResponse(w, r, http.StatusBadRequest, "invalid QA content")
+			return
+		}
+		content = qa
+
+	case data.FlashcardMCQ:
+		var mcq data.MCQContent
+		if err := json.Unmarshal(input.Content, &mcq); err != nil {
+			app.errorResponse(w, r, http.StatusBadRequest, "invalid MCQ content")
+			return
+		}
+		content = mcq
+
+	case data.FlashcardYesNo:
+		var yn data.YesNoContent
+		if err := json.Unmarshal(input.Content, &yn); err != nil {
+			app.errorResponse(w, r, http.StatusBadRequest, "invalid Yes/No content")
+			return
+		}
+		content = yn
+
+	default:
+		app.badRequestResponse(w, r, errors.New("invalid flashcard type"))
+		return
+	}
+
+	flashcard.Section = input.Section
+	flashcard.SectionType = input.SectionType
+	flashcard.SourceFile = input.SourceFile
+	flashcard.Text = input.Text
+	flashcard.Question = input.Question
+	flashcard.Type = input.Type
+	flashcard.Content = content
+	flashcard.Categories = input.Categories
+
+	v := validator.New()
+
+	if data.ValidateFlashcard(v, flashcard); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	err = app.models.Flashcards.Update(flashcard)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"flashcard": flashcard}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
