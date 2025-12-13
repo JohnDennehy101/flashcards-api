@@ -2,9 +2,12 @@ package data
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"flashcards-api.johndennehy101.tech/internal/validator"
+	"github.com/lib/pq"
 )
 
 type FlashcardType string
@@ -77,15 +80,40 @@ type FlashcardModel struct {
 	DB *sql.DB
 }
 
-func (m FlashcardModel) Insert(movie *Flashcard) error {
-	return nil
+func (m FlashcardModel) Insert(flashcard *Flashcard) error {
+	query := `
+		INSERT INTO flashcards (
+			section, section_type, source_file, text, question,
+			flashcard_type, flashcard_content, categories, version, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		RETURNING id, created_at, version`
+	
+	contentJSON, err := json.Marshal(flashcard.Content)
+	if err != nil {
+		return fmt.Errorf("failed to marshal flashcard content: %w", err)
+	}
+
+	args := []any{
+		flashcard.Section,
+		flashcard.SectionType,
+		flashcard.SourceFile,
+		flashcard.Text,
+		flashcard.Question,
+		flashcard.Type,
+		contentJSON,
+		pq.Array(flashcard.Categories),
+		flashcard.Version,
+		time.Now(),
+	}
+
+	return m.DB.QueryRow(query, args...).Scan(&flashcard.ID, &flashcard.CreatedAt, &flashcard.Version)
 }
 
 func (m FlashcardModel) Get(id int64) (*Flashcard, error) {
 	return nil, nil
 }
 
-func (m FlashcardModel) Update(movie *Flashcard) error {
+func (m FlashcardModel) Update(flashcard *Flashcard) error {
 	return nil
 }
 
