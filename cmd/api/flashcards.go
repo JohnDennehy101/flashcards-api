@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -90,7 +91,19 @@ func (app *application) createFlashcardHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	app.writeJSON(w, http.StatusCreated, flashcard, nil)
+	err = app.models.Flashcards.Insert(&flashcard)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	headers := make(http.Header)
+	headers.Set("Location", fmt.Sprintf("/v1/flashcards/%d", flashcard.ID))
+
+	err = app.writeJSON(w, http.StatusCreated, envelope{"flashcard": flashcard}, headers)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
 }
 
 func (app *application) showFlashcardHandler(w http.ResponseWriter, r *http.Request) {
