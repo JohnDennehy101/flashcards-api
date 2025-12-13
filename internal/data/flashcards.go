@@ -1,6 +1,7 @@
 package data
 
 import (
+	"database/sql"
 	"time"
 
 	"flashcards-api.johndennehy101.tech/internal/validator"
@@ -70,4 +71,24 @@ func ValidateFlashcard(v *validator.Validator, flashcard *Flashcard) {
 	v.Check(validator.Unique(flashcard.Categories), "categories", "categories must be unique")
 	v.Check(validator.PermittedValue(flashcard.Type, FlashcardQA, FlashcardMCQ, FlashcardYesNo),
 		"flashcard_type", "invalid flashcard type")
+}
+
+type FlashcardModel struct {
+	DB *sql.DB
+}
+
+func (m FlashcardModel) Insert(movie *Flashcard) error {
+	return nil
+}
+
+func (m FlashcardModel) Get(id int64) (*Flashcard, error) {
+	return nil, nil
+}
+
+func (m FlashcardModel) Update(movie *Flashcard) error {
+	return nil
+}
+
+func (m FlashcardModel) Delete(id int64) error {
+	return nil
 }
