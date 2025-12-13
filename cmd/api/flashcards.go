@@ -1,15 +1,96 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"flashcards-api.johndennehy101.tech/internal/data"
+	"flashcards-api.johndennehy101.tech/internal/validator"
 )
 
+type flashcardInput struct {
+	ID          int64              `json:"id"`
+	Section     *string            `json:"section"`
+	SectionType *string            `json:"section_type"`
+	SourceFile  *string            `json:"source_file"`
+	Text        string             `json:"text"`
+	Question    string             `json:"question"`
+	Type        data.FlashcardType `json:"flashcard_type"`
+	Content     json.RawMessage    `json:"flashcard_content"`
+	Categories  []string           `json:"categories"`
+	Version     int32              `json:"version"`
+}
+
 func (app *application) createFlashcardHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "create a new flashcard")
+	var input flashcardInput
+
+	err := app.readJSON(w, r, &input)
+	if err != nil {
+		app.badRequestResponse(w, r, err)
+		return
+	}
+
+	v := validator.New()
+
+	// Decode content based on type
+	var content data.FlashcardContent
+	switch input.Type {
+	case data.FlashcardQA:
+		var qa data.QAContent
+		if err := json.Unmarshal(input.Content, &qa); err != nil {
+			app.errorResponse(w, r, http.StatusBadRequest, "invalid QA content")
+			return
+		}
+		v.Check(qa.Answer != "", "flashcard_content.answer", "answer must not be empty")
+		content = qa
+
+	case data.FlashcardMCQ:
+		var mcq data.MCQContent
+		if err := json.Unmarshal(input.Content, &mcq); err != nil {
+			app.errorResponse(w, r, http.StatusBadRequest, "invalid MCQ content")
+			return
+		}
+		v.Check(len(mcq.Options) >= 2, "flashcard_content.options", "at least 2 options required")
+		v.Check(mcq.CorrectIndex >= 0 && mcq.CorrectIndex < len(mcq.Options),
+			"flashcard_content.correct_index", "correct index out of bounds")
+		v.Check(validator.Unique(mcq.Options), "flashcard_content.options", "options must be unique")
+		content = mcq
+
+	case data.FlashcardYesNo:
+		var yn data.YesNoContent
+		if err := json.Unmarshal(input.Content, &yn); err != nil {
+			app.errorResponse(w, r, http.StatusBadRequest, "invalid Yes/No content")
+			return
+		}
+		content = yn
+
+	default:
+		app.badRequestResponse(w, r, errors.New("invalid flashcard type"))
+		return
+	}
+
+	flashcard := data.Flashcard{
+		ID:          input.ID,
+		Section:     input.Section,
+		SectionType: input.SectionType,
+		SourceFile:  input.SourceFile,
+		Text:        input.Text,
+		Question:    input.Question,
+		Type:        input.Type,
+		Content:     content,
+		Categories:  input.Categories,
+		Version:     input.Version,
+		CreatedAt:   time.Now(),
+	}
+
+	if data.ValidateFlashcard(v, &flashcard); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	app.writeJSON(w, http.StatusCreated, flashcard, nil)
 }
 
 func (app *application) showFlashcardHandler(w http.ResponseWriter, r *http.Request) {

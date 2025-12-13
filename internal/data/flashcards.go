@@ -2,6 +2,8 @@ package data
 
 import (
 	"time"
+
+	"flashcards-api.johndennehy101.tech/internal/validator"
 )
 
 type FlashcardType string
@@ -22,6 +24,21 @@ type YesNoContent struct {
 }
 
 func (YesNoContent) isFlashcardContent() {}
+
+type QAContent struct {
+	Answer        string `json:"answer"`
+	Justification string `json:"justification,omitempty"`
+}
+
+func (QAContent) isFlashcardContent() {}
+
+type MCQContent struct {
+	Options       []string `json:"options"`
+	CorrectIndex  int      `json:"correct_index"`
+	Justification string   `json:"justification,omitempty"`
+}
+
+func (MCQContent) isFlashcardContent() {}
 
 type Flashcard struct {
 	ID int64 `json:"id"`
@@ -45,4 +62,12 @@ type Flashcard struct {
 
 	Categories []string `json:"categories"`
 	Version    int32    `json:"version"`
+}
+
+func ValidateFlashcard(v *validator.Validator, flashcard *Flashcard) {
+	v.Check(flashcard.Question != "", "question", "question must be provided")
+	v.Check(flashcard.Text != "", "text", "text must be provided")
+	v.Check(validator.Unique(flashcard.Categories), "categories", "categories must be unique")
+	v.Check(validator.PermittedValue(flashcard.Type, FlashcardQA, FlashcardMCQ, FlashcardYesNo),
+		"flashcard_type", "invalid flashcard type")
 }
