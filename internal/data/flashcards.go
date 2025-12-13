@@ -192,7 +192,7 @@ func (m FlashcardModel) Update(flashcard *Flashcard) error {
 			flashcard_content = $7,
 			categories = $8,
 			version = version + 1
-		WHERE id = $9
+		WHERE id = $9 AND version = $10
 		RETURNING version
 	`
 
@@ -206,9 +206,20 @@ func (m FlashcardModel) Update(flashcard *Flashcard) error {
 		contentJSON,
 		pq.Array(flashcard.Categories),
 		flashcard.ID,
+		flashcard.Version,
 	}
 
-	return m.DB.QueryRow(query, args...).Scan(&flashcard.Version)
+	err = m.DB.QueryRow(query, args...).Scan(&flashcard.Version)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrEditConflict
+		default:
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (m FlashcardModel) Delete(id int64) error {
@@ -229,7 +240,7 @@ func (m FlashcardModel) Delete(id int64) error {
 	if err != nil {
 		return err
 	}
-	
+
 	if rowsAffected == 0 {
 		return ErrRecordNotFound
 	}
