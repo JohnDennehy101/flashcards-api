@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -107,7 +108,11 @@ func (m FlashcardModel) Insert(flashcard *Flashcard) error {
 		time.Now(),
 	}
 
-	return m.DB.QueryRow(query, args...).Scan(&flashcard.ID, &flashcard.CreatedAt, &flashcard.Version)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+
+	defer cancel()
+
+	return m.DB.QueryRowContext(ctx, query, args...).Scan(&flashcard.ID, &flashcard.CreatedAt, &flashcard.Version)
 }
 
 func (m FlashcardModel) Get(id int64) (*Flashcard, error) {
@@ -125,7 +130,11 @@ func (m FlashcardModel) Get(id int64) (*Flashcard, error) {
 	var flashcard Flashcard
 	var contentJSON []byte
 
-	err := m.DB.QueryRow(query, id).Scan(
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+
+	defer cancel()
+
+	err := m.DB.QueryRowContext(ctx, query, id).Scan(
 		&flashcard.ID,
 		&flashcard.Section,
 		&flashcard.SectionType,
@@ -209,7 +218,11 @@ func (m FlashcardModel) Update(flashcard *Flashcard) error {
 		flashcard.Version,
 	}
 
-	err = m.DB.QueryRow(query, args...).Scan(&flashcard.Version)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+
+	defer cancel()
+
+	err = m.DB.QueryRowContext(ctx, query, args...).Scan(&flashcard.Version)
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -231,7 +244,10 @@ func (m FlashcardModel) Delete(id int64) error {
         DELETE FROM flashcards
         WHERE id = $1`
 
-	result, err := m.DB.Exec(query, id)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	result, err := m.DB.ExecContext(ctx, query, id)
 	if err != nil {
 		return err
 	}
