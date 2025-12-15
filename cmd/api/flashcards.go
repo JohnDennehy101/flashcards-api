@@ -253,3 +253,49 @@ func (app *application) deleteFlashcardHandler(w http.ResponseWriter, r *http.Re
 		app.serverErrorResponse(w, r, err)
 	}
 }
+
+func (app *application) listFlashcardsHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Section     string
+		SectionType string
+		SourceFile  *string
+		Categories  []string
+		data.Filters
+	}
+
+	v := validator.New()
+
+	qs := r.URL.Query()
+
+	input.Section = app.readString(qs, "section", "")
+	input.SectionType = app.readString(qs, "section_type", "")
+	file := app.readString(qs, "file", "")
+
+	if file != "" {
+		input.SourceFile = &file
+	}
+
+	input.Categories = app.readCSV(qs, "categories", []string{})
+
+	input.Filters.Page = app.readInt(qs, "page", 1, v)
+	input.Filters.PageSize = app.readInt(qs, "page_size", 20, v)
+
+	input.Filters.Sort = app.readString(qs, "sort", "id")
+	input.Filters.SortSafelist = []string{"id", "section", "section_type", "file", "-id", "-section", "-section_type", "-file"}
+
+	if data.ValidateFilters(v, input.Filters); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	flashcards, metadata, err := app.models.Flashcards.GetAll(input.Section, input.SectionType, file, input.Categories, input.Filters)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"flashcards": flashcards, "metadata": metadata}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
