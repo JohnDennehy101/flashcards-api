@@ -263,3 +263,107 @@ func (m FlashcardModel) Delete(id int64) error {
 
 	return nil
 }
+
+func (m FlashcardModel) GetAll(section, sectionType, sourceFile string, categories []string, filters Filters) ([]*Flashcard, Metadata, error) {
+	query := fmt.Sprintf(`
+		SELECT 
+		    count(*) OVER(),
+			id,
+			section,
+			section_type,
+			source_file,
+			text,
+			question,
+			flashcard_type,
+			flashcard_content,
+			categories,
+			version,
+			created_at
+		FROM flashcards
+		WHERE (to_tsvector('simple', section) @@ plainto_tsquery('simple', $1) OR $1 = '')
+		AND (LOWER(section_type) = LOWER($2) OR $2 = '')
+		AND (LOWER(source_file) = LOWER($3) OR $3 = '')
+        AND (categories @> $4 OR $4 = '{}')
+		ORDER BY %s %s, id ASC
+		LIMIT $5 OFFSET $6`, filters.sortColumn(), filters.sortDirection())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	rows, err := m.DB.QueryContext(
+		ctx,
+		query,
+		section,
+		sectionType,
+		sourceFile,
+		pq.Array(categories),
+		filters.limit(),
+		filters.offset(),
+	)
+	if err != nil {
+		return nil, Metadata{}, err
+	}
+	defer rows.Close()
+
+	totalRecords := 0
+	flashcards := []*Flashcard{}
+
+	for rows.Next() {
+		var flashcard Flashcard
+		var contentJSON []byte
+
+		err := rows.Scan(
+			&totalRecords,
+			&flashcard.ID,
+			&flashcard.Section,
+			&flashcard.SectionType,
+			&flashcard.SourceFile,
+			&flashcard.Text,
+			&flashcard.Question,
+			&flashcard.Type,
+			&contentJSON,
+			pq.Array(&flashcard.Categories),
+			&flashcard.Version,
+			&flashcard.CreatedAt,
+		)
+		if err != nil {
+			return nil, Metadata{}, err
+		}
+
+		switch flashcard.Type {
+		case FlashcardQA:
+			var qa QAContent
+			if err := json.Unmarshal(contentJSON, &qa); err != nil {
+				return nil, Metadata{}, err
+			}
+			flashcard.Content = qa
+
+		case FlashcardMCQ:
+			var mcq MCQContent
+			if err := json.Unmarshal(contentJSON, &mcq); err != nil {
+				return nil, Metadata{}, err
+			}
+			flashcard.Content = mcq
+
+		case FlashcardYesNo:
+			var yn YesNoContent
+			if err := json.Unmarshal(contentJSON, &yn); err != nil {
+				return nil, Metadata{}, err
+			}
+			flashcard.Content = yn
+
+		default:
+			return nil, Metadata{}, fmt.Errorf("unknown flashcard type: %s", flashcard.Type)
+		}
+
+		flashcards = append(flashcards, &flashcard)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, Metadata{}, err
+	}
+
+	metadata := calculateMetadata(totalRecords, filters.Page, filters.PageSize)
+
+	return flashcards, metadata, nil
+}
