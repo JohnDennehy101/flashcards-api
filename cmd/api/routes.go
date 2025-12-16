@@ -21,5 +21,7 @@ func (app *application) routes() http.Handler {
 	router.HandlerFunc(http.MethodPut, "/v1/flashcards/:id", app.updateFlashcardHandler)
 	router.HandlerFunc(http.MethodDelete, "/v1/flashcards/:id", app.deleteFlashcardHandler)
 
+	router.HandlerFunc(http.MethodPost, "/v1/users", app.registerUserHandler)
+
 	return app.recoverPanic(app.rateLimit(router))
 }
