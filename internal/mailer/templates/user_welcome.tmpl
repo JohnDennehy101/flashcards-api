@@ -1,0 +1,33 @@
+{{define "subject"}}Welcome to the Law Flashcards App!{{end}}
+
+{{define "plainBody"}}
+Hi,
+
+Thanks for signing up for an account.
+
+For future reference, your user ID number is {{.ID}}.
+
+Thanks,
+
+John D
+{{end}}
+
+{{define "htmlBody"}}
+<!doctype html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width" />
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+
+<body>
+    <p>Hi,</p>
+    <p>Thanks for signing up for an account.</p>
+    <p>For future reference, your user ID number is {{.ID}}.</p>
+    <p>Thanks,</p>
+    <p>John D</p>
+</body>
+
+</html>
+{{end}}
