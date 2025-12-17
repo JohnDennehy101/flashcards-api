@@ -15,6 +15,8 @@ var (
 	ErrDuplicateEmail = errors.New("duplicate email")
 )
 
+var AnonymousUser = &User{}
+
 type UserModel struct {
 	DB *sql.DB
 }
@@ -84,6 +86,10 @@ func ValidateUser(v *validator.Validator, user *User) {
 	if user.Password.hash == nil {
 		panic("missing password hash for user")
 	}
+}
+
+func (u *User) IsAnonymous() bool {
+	return u == AnonymousUser
 }
 
 func (m UserModel) Insert(user *User) error {
@@ -206,7 +212,7 @@ func (m UserModel) GetForToken(tokenScope, tokenPlaintext string) (*User, error)
 		&user.Activated,
 		&user.Version,
 	)
-	
+
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
