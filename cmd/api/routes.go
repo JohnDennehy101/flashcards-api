@@ -15,11 +15,11 @@ func (app *application) routes() http.Handler {
 
 	router.HandlerFunc(http.MethodGet, "/v1/healthcheck", app.healthcheckHandler)
 
-	router.HandlerFunc(http.MethodGet, "/v1/flashcards", app.listFlashcardsHandler)
-	router.HandlerFunc(http.MethodPost, "/v1/flashcards", app.createFlashcardHandler)
-	router.HandlerFunc(http.MethodGet, "/v1/flashcards/:id", app.showFlashcardHandler)
-	router.HandlerFunc(http.MethodPut, "/v1/flashcards/:id", app.updateFlashcardHandler)
-	router.HandlerFunc(http.MethodDelete, "/v1/flashcards/:id", app.deleteFlashcardHandler)
+	router.HandlerFunc(http.MethodGet, "/v1/flashcards", app.requirePermission("flashcards:read", app.listFlashcardsHandler))
+	router.HandlerFunc(http.MethodPost, "/v1/flashcards", app.requirePermission("flashcards:write", app.createFlashcardHandler))
+	router.HandlerFunc(http.MethodGet, "/v1/flashcards/:id", app.requirePermission("flashcards:read", app.showFlashcardHandler))
+	router.HandlerFunc(http.MethodPut, "/v1/flashcards/:id", app.requirePermission("flashcards:write", app.updateFlashcardHandler))
+	router.HandlerFunc(http.MethodDelete, "/v1/flashcards/:id", app.requirePermission("flashcards:write", app.deleteFlashcardHandler))
 
 	router.HandlerFunc(http.MethodPost, "/v1/users", app.registerUserHandler)
 	router.HandlerFunc(http.MethodPut, "/v1/users/activated", app.activateUserHandler)
