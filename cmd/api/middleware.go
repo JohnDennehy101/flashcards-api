@@ -261,7 +261,7 @@ func (app *application) metrics(next http.Handler) http.Handler {
 		next.ServeHTTP(mw, r)
 
 		totalResponsesSent.Add(1)
-		
+
 		totalResponsesSentByStatus.Add(strconv.Itoa(mw.statusCode), 1)
 
 		duration := time.Since(start).Microseconds()
