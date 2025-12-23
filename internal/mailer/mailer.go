@@ -90,7 +90,7 @@ func (m *Mailer) Send(recipient string, templateFile string, data any) error {
 		if err == nil {
 			return nil
 		}
-		
+
 		if i != 3 {
 			time.Sleep(500 * time.Millisecond)
 		}
