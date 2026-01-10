@@ -11,7 +11,7 @@ confirm:
 ## run/api: run the cmd/api application
 .PHONY: run/api
 run/api:
-	go run ./cmd/api -db-dsn=${FLASHCARDS_DB_DSN}
+	go run ./cmd/api -db-dsn=${FLASHCARDS_DB_DSN} -cors-trusted-origins=${CORS_TRUSTED_ORIGINS}
 
 ## db/psql: connect to the database using psql
 .PHONY: db/psql

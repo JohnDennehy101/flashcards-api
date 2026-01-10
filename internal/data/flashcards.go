@@ -68,6 +68,15 @@ type Flashcard struct {
 
 	Categories []string `json:"categories"`
 	Version    int32    `json:"version"`
+
+	CorrectCount int    `json:"correct_count"`
+	Status       string `json:"status"`
+}
+type FlashcardStats struct {
+	Total      int `json:"total"`
+	Mastered   int `json:"mastered"`
+	InProgress int `json:"in_progress"`
+	NotStarted int `json:"not_started"`
 }
 
 func ValidateFlashcard(v *validator.Validator, flashcard *Flashcard) {
@@ -82,50 +91,64 @@ type FlashcardModel struct {
 	DB *sql.DB
 }
 
-func (m FlashcardModel) Insert(flashcard *Flashcard) error {
-	query := `
-		INSERT INTO flashcards (
-			section, section_type, source_file, text, question,
-			flashcard_type, flashcard_content, categories, version, created_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		RETURNING id, created_at, version`
+func (m FlashcardModel) Insert(flashcard *Flashcard, userID int64) error {
+	queryCard := `
+       INSERT INTO flashcards (
+          section, section_type, source_file, text, question,
+          flashcard_type, flashcard_content, categories, version, created_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING id, created_at, version`
+
+	queryProgress := `
+       INSERT INTO user_flashcards (user_id, flashcard_id, correct_count, status, last_reviewed_at)
+       VALUES ($1, $2, 0, 'not_started', NOW())`
 
 	contentJSON, err := json.Marshal(flashcard.Content)
 	if err != nil {
 		return fmt.Errorf("failed to marshal flashcard content: %w", err)
 	}
 
-	args := []any{
-		flashcard.Section,
-		flashcard.SectionType,
-		flashcard.SourceFile,
-		flashcard.Text,
-		flashcard.Question,
-		flashcard.Type,
-		contentJSON,
-		pq.Array(flashcard.Categories),
-		flashcard.Version,
-		time.Now(),
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-
 	defer cancel()
 
-	return m.DB.QueryRowContext(ctx, query, args...).Scan(&flashcard.ID, &flashcard.CreatedAt, &flashcard.Version)
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	err = tx.QueryRowContext(ctx, queryCard,
+		flashcard.Section, flashcard.SectionType, flashcard.SourceFile,
+		flashcard.Text, flashcard.Question, flashcard.Type,
+		contentJSON, pq.Array(flashcard.Categories), flashcard.Version, time.Now(),
+	).Scan(&flashcard.ID, &flashcard.CreatedAt, &flashcard.Version)
+
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx, queryProgress, userID, flashcard.ID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
-func (m FlashcardModel) Get(id int64) (*Flashcard, error) {
+func (m FlashcardModel) Get(id int64, userID int64) (*Flashcard, error) {
 	if id < 1 {
 		return nil, ErrRecordNotFound
 	}
 
 	query := `
         SELECT 
-            id, section, section_type, source_file, text, question,
-            flashcard_type, flashcard_content, categories, version, created_at
-        FROM flashcards
-        WHERE id = $1`
+            f.id, f.section, f.section_type, f.source_file, f.text, f.question,
+            f.flashcard_type, f.flashcard_content, f.categories, f.version, f.created_at,
+            COALESCE(uf.correct_count, 0),
+            COALESCE(uf.status, 'not_started')
+        FROM flashcards f
+        LEFT JOIN user_flashcards uf ON f.id = uf.flashcard_id AND uf.user_id = $2
+        WHERE f.id = $1`
 
 	var flashcard Flashcard
 	var contentJSON []byte
@@ -134,7 +157,7 @@ func (m FlashcardModel) Get(id int64) (*Flashcard, error) {
 
 	defer cancel()
 
-	err := m.DB.QueryRowContext(ctx, query, id).Scan(
+	err := m.DB.QueryRowContext(ctx, query, id, userID).Scan(
 		&flashcard.ID,
 		&flashcard.Section,
 		&flashcard.SectionType,
@@ -146,6 +169,8 @@ func (m FlashcardModel) Get(id int64) (*Flashcard, error) {
 		pq.Array(&flashcard.Categories),
 		&flashcard.Version,
 		&flashcard.CreatedAt,
+		&flashcard.CorrectCount,
+		&flashcard.Status,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -240,14 +265,22 @@ func (m FlashcardModel) Delete(id int64) error {
 		return ErrRecordNotFound
 	}
 
-	query := `
-        DELETE FROM flashcards
-        WHERE id = $1`
-
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	result, err := m.DB.ExecContext(ctx, query, id)
+	tx, err := m.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM user_flashcards WHERE flashcard_id = $1", id)
+	if err != nil {
+		return err
+	}
+
+	query := `DELETE FROM flashcards WHERE id = $1`
+	result, err := tx.ExecContext(ctx, query, id)
 	if err != nil {
 		return err
 	}
@@ -261,31 +294,53 @@ func (m FlashcardModel) Delete(id int64) error {
 		return ErrRecordNotFound
 	}
 
-	return nil
+	return tx.Commit()
 }
 
-func (m FlashcardModel) GetAll(section, sectionType, sourceFile string, categories []string, filters Filters) ([]*Flashcard, Metadata, error) {
+func (m FlashcardModel) GetUserStats(userID int64) (*FlashcardStats, error) {
+	query := `
+        SELECT 
+            COUNT(*),
+            COUNT(*) FILTER (WHERE status = 'mastered'),
+            COUNT(*) FILTER (WHERE status = 'in_progress'),
+            COUNT(*) FILTER (WHERE status = 'not_started')
+        FROM user_flashcards
+        WHERE user_id = $1`
+
+	var stats FlashcardStats
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := m.DB.QueryRowContext(ctx, query, userID).Scan(
+		&stats.Total,
+		&stats.Mastered,
+		&stats.InProgress,
+		&stats.NotStarted,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &stats, nil
+}
+
+func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile string, categories []string, filters Filters) ([]*Flashcard, Metadata, error) {
 	query := fmt.Sprintf(`
-		SELECT 
-		    count(*) OVER(),
-			id,
-			section,
-			section_type,
-			source_file,
-			text,
-			question,
-			flashcard_type,
-			flashcard_content,
-			categories,
-			version,
-			created_at
-		FROM flashcards
-		WHERE (to_tsvector('simple', section) @@ plainto_tsquery('simple', $1) OR $1 = '')
-		AND (LOWER(section_type) = LOWER($2) OR $2 = '')
-		AND (LOWER(source_file) = LOWER($3) OR $3 = '')
-        AND (categories @> $4 OR $4 = '{}')
-		ORDER BY %s %s, id ASC
-		LIMIT $5 OFFSET $6`, filters.sortColumn(), filters.sortDirection())
+       SELECT 
+          count(*) OVER(),
+          f.id, f.section, f.section_type, f.source_file, f.text, f.question,
+          f.flashcard_type, f.flashcard_content, f.categories, f.version, f.created_at,
+          COALESCE(uf.correct_count, 0),
+          COALESCE(uf.status, 'not_started')
+       FROM flashcards f
+       LEFT JOIN user_flashcards uf ON f.id = uf.flashcard_id AND uf.user_id = $1
+       WHERE (to_tsvector('simple', f.section) @@ plainto_tsquery('simple', $2) OR $2 = '')
+       AND (LOWER(f.section_type) = LOWER($3) OR $3 = '')
+       AND (LOWER(f.source_file) = LOWER($4) OR $4 = '')
+       AND (f.categories @> $5 OR $5 = '{}')
+       ORDER BY %s %s, f.id ASC
+       LIMIT $6 OFFSET $7`, filters.sortColumn(), filters.sortDirection())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -293,6 +348,7 @@ func (m FlashcardModel) GetAll(section, sectionType, sourceFile string, categori
 	rows, err := m.DB.QueryContext(
 		ctx,
 		query,
+		userID,
 		section,
 		sectionType,
 		sourceFile,
@@ -325,6 +381,8 @@ func (m FlashcardModel) GetAll(section, sectionType, sourceFile string, categori
 			pq.Array(&flashcard.Categories),
 			&flashcard.Version,
 			&flashcard.CreatedAt,
+			&flashcard.CorrectCount,
+			&flashcard.Status,
 		)
 		if err != nil {
 			return nil, Metadata{}, err
@@ -366,4 +424,42 @@ func (m FlashcardModel) GetAll(section, sectionType, sourceFile string, categori
 	metadata := calculateMetadata(totalRecords, filters.Page, filters.PageSize)
 
 	return flashcards, metadata, nil
+}
+
+func (m FlashcardModel) IncrementCorrectCount(id int64, userID int64) error {
+	query := `
+        INSERT INTO user_flashcards (user_id, flashcard_id, correct_count, last_reviewed_at, status)
+        VALUES ($1, $2, 1, NOW(), 'in_progress')
+        ON CONFLICT (user_id, flashcard_id) 
+        DO UPDATE SET 
+            correct_count = user_flashcards.correct_count + 1,
+            last_reviewed_at = NOW(),
+            status = CASE 
+                WHEN user_flashcards.correct_count + 1 >= 5 THEN 'mastered'
+                ELSE 'in_progress'
+            END
+        WHERE user_flashcards.correct_count < 5`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := m.DB.ExecContext(ctx, query, userID, id)
+	return err
+}
+
+func (m FlashcardModel) ResetCorrectCount(id int64, userID int64) error {
+	query := `
+        INSERT INTO user_flashcards (user_id, flashcard_id, correct_count, last_reviewed_at, status)
+        VALUES ($1, $2, 0, NOW(), 'not_started')
+        ON CONFLICT (user_id, flashcard_id) 
+        DO UPDATE SET 
+            correct_count = 0,
+            last_reviewed_at = NOW(),
+            status = 'not_started'`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := m.DB.ExecContext(ctx, query, userID, id)
+	return err
 }

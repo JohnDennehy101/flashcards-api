@@ -20,7 +20,12 @@ func (app *application) routes() http.Handler {
 	router.HandlerFunc(http.MethodPost, "/v1/flashcards", app.requirePermission("flashcards:write", app.createFlashcardHandler))
 	router.HandlerFunc(http.MethodGet, "/v1/flashcards/:id", app.requirePermission("flashcards:read", app.showFlashcardHandler))
 	router.HandlerFunc(http.MethodPut, "/v1/flashcards/:id", app.requirePermission("flashcards:write", app.updateFlashcardHandler))
+	router.HandlerFunc(http.MethodPost, "/v1/flashcards/:id/review", app.requirePermission("flashcards:write", app.reviewFlashcardHandler))
+	router.HandlerFunc(http.MethodPost, "/v1/flashcards/:id/reset", app.requirePermission("flashcards:write", app.resetFlashcardHandler))
+
 	router.HandlerFunc(http.MethodDelete, "/v1/flashcards/:id", app.requirePermission("flashcards:write", app.deleteFlashcardHandler))
+
+	router.HandlerFunc(http.MethodGet, "/v1/stats/flashcards", app.requirePermission("flashcards:read", app.showFlashcardStatsHandler))
 
 	router.HandlerFunc(http.MethodPost, "/v1/users", app.registerUserHandler)
 	router.HandlerFunc(http.MethodPut, "/v1/users/activated", app.activateUserHandler)
