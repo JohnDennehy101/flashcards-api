@@ -35,7 +35,6 @@ func (app *application) createFlashcardHandler(w http.ResponseWriter, r *http.Re
 
 	v := validator.New()
 
-	// Decode content based on type
 	var content data.FlashcardContent
 	switch input.Type {
 	case data.FlashcardQA:
@@ -91,7 +90,9 @@ func (app *application) createFlashcardHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	err = app.models.Flashcards.Insert(&flashcard)
+	user := app.contextGetUser(r)
+
+	err = app.models.Flashcards.Insert(&flashcard, user.ID)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
@@ -113,7 +114,9 @@ func (app *application) showFlashcardHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	flashcard, err := app.models.Flashcards.Get(id)
+	user := app.contextGetUser(r)
+
+	flashcard, err := app.models.Flashcards.Get(id, user.ID)
 	if err != nil {
 		switch {
 		case errors.Is(err, data.ErrRecordNotFound):
@@ -130,6 +133,21 @@ func (app *application) showFlashcardHandler(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+func (app *application) showFlashcardStatsHandler(w http.ResponseWriter, r *http.Request) {
+	user := app.contextGetUser(r)
+
+	stats, err := app.models.Flashcards.GetUserStats(user.ID)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"stats": stats}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
 func (app *application) updateFlashcardHandler(w http.ResponseWriter, r *http.Request) {
 	id, err := app.readIDParam(r)
 	if err != nil {
@@ -137,7 +155,9 @@ func (app *application) updateFlashcardHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	flashcard, err := app.models.Flashcards.Get(id)
+	user := app.contextGetUser(r)
+
+	flashcard, err := app.models.Flashcards.Get(id, user.ID)
 	if err != nil {
 		switch {
 		case errors.Is(err, data.ErrRecordNotFound):
@@ -230,6 +250,57 @@ func (app *application) updateFlashcardHandler(w http.ResponseWriter, r *http.Re
 	}
 }
 
+func (app *application) listFlashcardsHandler(w http.ResponseWriter, r *http.Request) {
+	user := app.contextGetUser(r)
+
+	var input struct {
+		Section     string
+		SectionType string
+		SourceFile  *string
+		Categories  []string
+		data.Filters
+		UserID int64
+	}
+
+	v := validator.New()
+
+	qs := r.URL.Query()
+
+	input.Section = app.readString(qs, "section", "")
+	input.SectionType = app.readString(qs, "section_type", "")
+	file := app.readString(qs, "file", "")
+
+	if file != "" {
+		input.SourceFile = &file
+	}
+
+	input.UserID = user.ID
+
+	input.Categories = app.readCSV(qs, "categories", []string{})
+
+	input.Filters.Page = app.readInt(qs, "page", 1, v)
+	input.Filters.PageSize = app.readInt(qs, "page_size", 20, v)
+
+	input.Filters.Sort = app.readString(qs, "sort", "id")
+	input.Filters.SortSafelist = []string{"id", "section", "section_type", "file", "-id", "-section", "-section_type", "-file"}
+
+	if data.ValidateFilters(v, input.Filters); !v.Valid() {
+		app.failedValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	flashcards, metadata, err := app.models.Flashcards.GetAll(input.UserID, input.Section, input.SectionType, file, input.Categories, input.Filters)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"flashcards": flashcards, "metadata": metadata}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
 func (app *application) deleteFlashcardHandler(w http.ResponseWriter, r *http.Request) {
 	id, err := app.readIDParam(r)
 	if err != nil {
@@ -254,47 +325,53 @@ func (app *application) deleteFlashcardHandler(w http.ResponseWriter, r *http.Re
 	}
 }
 
-func (app *application) listFlashcardsHandler(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Section     string
-		SectionType string
-		SourceFile  *string
-		Categories  []string
-		data.Filters
-	}
-
-	v := validator.New()
-
-	qs := r.URL.Query()
-
-	input.Section = app.readString(qs, "section", "")
-	input.SectionType = app.readString(qs, "section_type", "")
-	file := app.readString(qs, "file", "")
-
-	if file != "" {
-		input.SourceFile = &file
-	}
-
-	input.Categories = app.readCSV(qs, "categories", []string{})
-
-	input.Filters.Page = app.readInt(qs, "page", 1, v)
-	input.Filters.PageSize = app.readInt(qs, "page_size", 20, v)
-
-	input.Filters.Sort = app.readString(qs, "sort", "id")
-	input.Filters.SortSafelist = []string{"id", "section", "section_type", "file", "-id", "-section", "-section_type", "-file"}
-
-	if data.ValidateFilters(v, input.Filters); !v.Valid() {
-		app.failedValidationResponse(w, r, v.Errors)
+func (app *application) reviewFlashcardHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
 		return
 	}
 
-	flashcards, metadata, err := app.models.Flashcards.GetAll(input.Section, input.SectionType, file, input.Categories, input.Filters)
+	user := app.contextGetUser(r)
+
+	err = app.models.Flashcards.IncrementCorrectCount(id, user.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"message": "progress updated"}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
+	}
+}
+
+func (app *application) resetFlashcardHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelope{"flashcards": flashcards, "metadata": metadata}, nil)
+	user := app.contextGetUser(r)
+
+	err = app.models.Flashcards.ResetCorrectCount(id, user.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"message": "progress reset"}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
