@@ -16,6 +16,8 @@ func (app *application) routes() http.Handler {
 
 	router.HandlerFunc(http.MethodGet, "/v1/healthcheck", app.healthcheckHandler)
 
+	router.HandlerFunc(http.MethodGet, "/v1/categories", app.requirePermission("flashcards:read", app.listCategoriesHandler))
+
 	router.HandlerFunc(http.MethodGet, "/v1/flashcards", app.requirePermission("flashcards:read", app.listFlashcardsHandler))
 	router.HandlerFunc(http.MethodPost, "/v1/flashcards", app.requirePermission("flashcards:write", app.createFlashcardHandler))
 	router.HandlerFunc(http.MethodGet, "/v1/flashcards/:id", app.requirePermission("flashcards:read", app.showFlashcardHandler))
