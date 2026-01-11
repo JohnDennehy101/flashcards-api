@@ -376,3 +376,18 @@ func (app *application) resetFlashcardHandler(w http.ResponseWriter, r *http.Req
 		app.serverErrorResponse(w, r, err)
 	}
 }
+
+func (app *application) listCategoriesHandler(w http.ResponseWriter, r *http.Request) {
+	user := app.contextGetUser(r)
+
+	categories, err := app.models.Flashcards.GetAllCategories(user.ID)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"categories": categories}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}

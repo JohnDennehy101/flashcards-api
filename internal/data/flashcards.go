@@ -79,6 +79,11 @@ type FlashcardStats struct {
 	NotStarted int `json:"not_started"`
 }
 
+type Category struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
 func ValidateFlashcard(v *validator.Validator, flashcard *Flashcard) {
 	v.Check(flashcard.Question != "", "question", "question must be provided")
 	v.Check(flashcard.Text != "", "text", "text must be provided")
@@ -462,4 +467,37 @@ func (m FlashcardModel) ResetCorrectCount(id int64, userID int64) error {
 
 	_, err := m.DB.ExecContext(ctx, query, userID, id)
 	return err
+}
+
+func (m FlashcardModel) GetAllCategories(userID int64) ([]*Category, error) {
+	query := `
+        SELECT category, COUNT(*)
+        FROM (
+            SELECT unnest(f.categories) AS category
+            FROM flashcards f
+            INNER JOIN user_flashcards uf ON f.id = uf.flashcard_id
+            WHERE uf.user_id = $1
+        ) AS expanded
+        GROUP BY category
+        ORDER BY category ASC`
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	rows, err := m.DB.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var categories []*Category
+	for rows.Next() {
+		var c Category
+		if err := rows.Scan(&c.Name, &c.Count); err != nil {
+			return nil, err
+		}
+		categories = append(categories, &c)
+	}
+
+	return categories, nil
 }
