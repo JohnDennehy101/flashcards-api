@@ -254,10 +254,11 @@ func (app *application) listFlashcardsHandler(w http.ResponseWriter, r *http.Req
 	user := app.contextGetUser(r)
 
 	var input struct {
-		Section     string
-		SectionType string
-		SourceFile  *string
-		Categories  []string
+		Section      string
+		SectionType  string
+		SourceFile   *string
+		Categories   []string
+		HideMastered bool
 		data.Filters
 		UserID int64
 	}
@@ -278,18 +279,20 @@ func (app *application) listFlashcardsHandler(w http.ResponseWriter, r *http.Req
 
 	input.Categories = app.readCSV(qs, "categories", []string{})
 
+	input.HideMastered = app.readBool(qs, "hide_mastered", false, v)
+
 	input.Filters.Page = app.readInt(qs, "page", 1, v)
 	input.Filters.PageSize = app.readInt(qs, "page_size", 20, v)
 
 	input.Filters.Sort = app.readString(qs, "sort", "id")
-	input.Filters.SortSafelist = []string{"id", "section", "section_type", "file", "-id", "-section", "-section_type", "-file"}
+	input.Filters.SortSafelist = []string{"id", "section", "section_type", "file", "-id", "-section", "-section_type", "-file", "random"}
 
 	if data.ValidateFilters(v, input.Filters); !v.Valid() {
 		app.failedValidationResponse(w, r, v.Errors)
 		return
 	}
 
-	flashcards, metadata, err := app.models.Flashcards.GetAll(input.UserID, input.Section, input.SectionType, file, input.Categories, input.Filters)
+	flashcards, metadata, err := app.models.Flashcards.GetAll(input.UserID, input.Section, input.SectionType, file, input.Categories, input.HideMastered, input.Filters)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
@@ -380,7 +383,13 @@ func (app *application) resetFlashcardHandler(w http.ResponseWriter, r *http.Req
 func (app *application) listCategoriesHandler(w http.ResponseWriter, r *http.Request) {
 	user := app.contextGetUser(r)
 
-	categories, err := app.models.Flashcards.GetAllCategories(user.ID)
+	v := validator.New()
+
+	qs := r.URL.Query()
+
+	hideMastered := app.readBool(qs, "hide_mastered", false, v)
+
+	categories, err := app.models.Flashcards.GetAllCategories(user.ID, hideMastered)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
