@@ -330,7 +330,7 @@ func (m FlashcardModel) GetUserStats(userID int64) (*FlashcardStats, error) {
 	return &stats, nil
 }
 
-func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile string, categories []string, filters Filters) ([]*Flashcard, Metadata, error) {
+func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile string, categories []string, hideMastered bool, filters Filters) ([]*Flashcard, Metadata, error) {
 	query := fmt.Sprintf(`
        SELECT 
           count(*) OVER(),
@@ -344,8 +344,9 @@ func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile st
        AND (LOWER(f.section_type) = LOWER($3) OR $3 = '')
        AND (LOWER(f.source_file) = LOWER($4) OR $4 = '')
        AND (f.categories @> $5 OR $5 = '{}')
+       AND ($6 = false OR COALESCE(uf.status, '') != 'mastered')
        ORDER BY %s %s, f.id ASC
-       LIMIT $6 OFFSET $7`, filters.sortColumn(), filters.sortDirection())
+       LIMIT $7 OFFSET $8`, filters.sortColumn(), filters.sortDirection())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -358,6 +359,7 @@ func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile st
 		sectionType,
 		sourceFile,
 		pq.Array(categories),
+		hideMastered,
 		filters.limit(),
 		filters.offset(),
 	)
@@ -400,21 +402,18 @@ func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile st
 				return nil, Metadata{}, err
 			}
 			flashcard.Content = qa
-
 		case FlashcardMCQ:
 			var mcq MCQContent
 			if err := json.Unmarshal(contentJSON, &mcq); err != nil {
 				return nil, Metadata{}, err
 			}
 			flashcard.Content = mcq
-
 		case FlashcardYesNo:
 			var yn YesNoContent
 			if err := json.Unmarshal(contentJSON, &yn); err != nil {
 				return nil, Metadata{}, err
 			}
 			flashcard.Content = yn
-
 		default:
 			return nil, Metadata{}, fmt.Errorf("unknown flashcard type: %s", flashcard.Type)
 		}
@@ -469,14 +468,15 @@ func (m FlashcardModel) ResetCorrectCount(id int64, userID int64) error {
 	return err
 }
 
-func (m FlashcardModel) GetAllCategories(userID int64) ([]*Category, error) {
+func (m FlashcardModel) GetAllCategories(userID int64, hideMastered bool) ([]*Category, error) {
 	query := `
         SELECT category, COUNT(*)
         FROM (
             SELECT unnest(f.categories) AS category
             FROM flashcards f
             INNER JOIN user_flashcards uf ON f.id = uf.flashcard_id
-            WHERE uf.user_id = $1
+            WHERE uf.user_id = $1 
+            AND ($2 = false OR COALESCE(uf.status, '') != 'mastered')
         ) AS expanded
         GROUP BY category
         ORDER BY category ASC`
@@ -484,7 +484,7 @@ func (m FlashcardModel) GetAllCategories(userID int64) ([]*Category, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	rows, err := m.DB.QueryContext(ctx, query, userID)
+	rows, err := m.DB.QueryContext(ctx, query, userID, hideMastered)
 	if err != nil {
 		return nil, err
 	}
