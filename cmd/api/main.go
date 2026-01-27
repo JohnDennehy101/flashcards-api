@@ -7,7 +7,6 @@ import (
 	"flag"
 	"flashcards-api.johndennehy101.tech/internal/data"
 	"flashcards-api.johndennehy101.tech/internal/mailer"
-	"fmt"
 	_ "github.com/lib/pq"
 	"log/slog"
 	"os"
@@ -55,8 +54,6 @@ type application struct {
 
 func main() {
 	var cfg config
-
-	fmt.Printf("SMTP_HOSTNAME=%q\n", os.Getenv("SMTP_HOSTNAME"))
 
 	flag.IntVar(&cfg.port, "port", 4000, "API server port")
 	flag.StringVar(&cfg.env, "env", "development", "Environment (development|staging|production)")
