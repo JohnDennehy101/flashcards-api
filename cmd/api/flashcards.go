@@ -252,56 +252,46 @@ func (app *application) updateFlashcardHandler(w http.ResponseWriter, r *http.Re
 
 func (app *application) listFlashcardsHandler(w http.ResponseWriter, r *http.Request) {
 	user := app.contextGetUser(r)
-
-	var input struct {
-		Section      string
-		SectionType  string
-		SourceFile   *string
-		Categories   []string
-		HideMastered bool
-		data.Filters
-		UserID int64
-	}
-
+	qs := r.URL.Query()
 	v := validator.New()
 
-	qs := r.URL.Query()
-
-	input.Section = app.readString(qs, "section", "")
-	input.SectionType = app.readString(qs, "section_type", "")
+	categories := app.readCSV(qs, "categories", []string{})
+	hideMastered := app.readBool(qs, "hide_mastered", false, v)
 	file := app.readString(qs, "file", "")
+	section := app.readString(qs, "section", "")
+	qType := app.readString(qs, "flashcard_type", "")
 
-	if file != "" {
-		input.SourceFile = &file
+	paging := data.Filters{
+		Page:         app.readInt(qs, "page", 1, v),
+		PageSize:     app.readInt(qs, "page_size", 20, v),
+		Sort:         app.readString(qs, "sort", "id"),
+		SortSafelist: []string{"id", "section", "file", "-id", "-section", "-file", "random"},
 	}
 
-	input.UserID = user.ID
-
-	input.Categories = app.readCSV(qs, "categories", []string{})
-
-	input.HideMastered = app.readBool(qs, "hide_mastered", false, v)
-
-	input.Filters.Page = app.readInt(qs, "page", 1, v)
-	input.Filters.PageSize = app.readInt(qs, "page_size", 20, v)
-
-	input.Filters.Sort = app.readString(qs, "sort", "id")
-	input.Filters.SortSafelist = []string{"id", "section", "section_type", "file", "-id", "-section", "-section_type", "-file", "random"}
-
-	if data.ValidateFilters(v, input.Filters); !v.Valid() {
+	if data.ValidateFilters(v, paging); !v.Valid() {
 		app.failedValidationResponse(w, r, v.Errors)
 		return
 	}
 
-	flashcards, metadata, err := app.models.Flashcards.GetAll(input.UserID, input.Section, input.SectionType, file, input.Categories, input.HideMastered, input.Filters)
+	flashcards, metadata, err := app.models.Flashcards.GetAll(
+		user.ID, section, qType, file, categories, hideMastered, paging,
+	)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
 	}
 
-	err = app.writeJSON(w, http.StatusOK, envelope{"flashcards": flashcards, "metadata": metadata}, nil)
+	filterOptions, err := app.models.Flashcards.GetFilterMetadata(user.ID, file, qType, hideMastered)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
+		return
 	}
+
+	app.writeJSON(w, http.StatusOK, envelope{
+		"flashcards":     flashcards,
+		"metadata":       metadata,
+		"filter_options": filterOptions,
+	}, nil)
 }
 
 func (app *application) deleteFlashcardHandler(w http.ResponseWriter, r *http.Request) {
@@ -375,27 +365,6 @@ func (app *application) resetFlashcardHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	err = app.writeJSON(w, http.StatusOK, envelope{"message": "progress reset"}, nil)
-	if err != nil {
-		app.serverErrorResponse(w, r, err)
-	}
-}
-
-func (app *application) listCategoriesHandler(w http.ResponseWriter, r *http.Request) {
-	user := app.contextGetUser(r)
-
-	v := validator.New()
-
-	qs := r.URL.Query()
-
-	hideMastered := app.readBool(qs, "hide_mastered", false, v)
-
-	categories, err := app.models.Flashcards.GetAllCategories(user.ID, hideMastered)
-	if err != nil {
-		app.serverErrorResponse(w, r, err)
-		return
-	}
-
-	err = app.writeJSON(w, http.StatusOK, envelope{"categories": categories}, nil)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}

@@ -84,6 +84,13 @@ type Category struct {
 	Count int    `json:"count"`
 }
 
+type FilterMetadata struct {
+	Categories    []Category `json:"categories"`
+	SourceFiles   []string   `json:"source_files"`
+	Sections      []string   `json:"sections"`
+	QuestionTypes []string   `json:"question_types"`
+}
+
 func ValidateFlashcard(v *validator.Validator, flashcard *Flashcard) {
 	v.Check(flashcard.Question != "", "question", "question must be provided")
 	v.Check(flashcard.Text != "", "text", "text must be provided")
@@ -213,6 +220,66 @@ func (m FlashcardModel) Get(id int64, userID int64) (*Flashcard, error) {
 	return &flashcard, nil
 }
 
+func (m FlashcardModel) GetFilterMetadata(userID int64, file string, qType string, hideMastered bool) (*FilterMetadata, error) {
+	query := `
+        SELECT jsonb_build_object(
+            'source_files', (
+                SELECT coalesce(jsonb_agg(distinct f.source_file), '[]')
+                FROM flashcards f
+                INNER JOIN user_flashcards uf ON f.id = uf.flashcard_id
+                WHERE uf.user_id = $1 
+                AND ($4 = '' OR f.flashcard_type = $4)
+                AND f.source_file IS NOT NULL
+            ),
+            'sections', (
+				SELECT coalesce(jsonb_agg(section_name), '[]')
+				FROM (
+					SELECT DISTINCT 
+					f.section as section_name,
+					CASE 
+						WHEN f.section ~ '\d' THEN 
+							(substring(f.section from '\d+'))::int 
+						ELSE 0 
+					END as sort_weight
+					FROM flashcards f
+					INNER JOIN user_flashcards uf ON f.id = uf.flashcard_id
+					WHERE uf.user_id = $1 
+					AND f.source_file = $2
+					AND ($4 = '' OR f.flashcard_type = $4)
+					AND f.section IS NOT NULL
+					ORDER BY sort_weight, section_name
+				) s
+			),
+            'categories', (
+                SELECT coalesce(jsonb_agg(cat_data), '[]')
+                FROM (
+                    SELECT unnest(f.categories) as name, count(*) as count
+                    FROM flashcards f
+                    INNER JOIN user_flashcards uf ON f.id = uf.flashcard_id
+                    WHERE uf.user_id = $1
+                    AND ($3 = false OR uf.status != 'mastered')
+                    AND ($4 = '' OR f.flashcard_type = $4)
+                    GROUP BY name
+                    ORDER BY name
+                ) cat_data
+            )
+        )`
+
+	var metadataJSON []byte
+	err := m.DB.QueryRow(query, userID, file, hideMastered, qType).Scan(&metadataJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	var metadata FilterMetadata
+	if err := json.Unmarshal(metadataJSON, &metadata); err != nil {
+		return nil, err
+	}
+
+	metadata.QuestionTypes = []string{"QA", "MCQ", "YesNo"}
+	return &metadata, nil
+}
+
 func (m FlashcardModel) Update(flashcard *Flashcard) error {
 	contentJSON, err := json.Marshal(flashcard.Content)
 	if err != nil {
@@ -330,7 +397,7 @@ func (m FlashcardModel) GetUserStats(userID int64) (*FlashcardStats, error) {
 	return &stats, nil
 }
 
-func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile string, categories []string, hideMastered bool, filters Filters) ([]*Flashcard, Metadata, error) {
+func (m FlashcardModel) GetAll(userID int64, section, qType, sourceFile string, categories []string, hideMastered bool, filters Filters) ([]*Flashcard, Metadata, error) {
 	query := fmt.Sprintf(`
        SELECT 
           count(*) OVER(),
@@ -341,7 +408,7 @@ func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile st
        FROM flashcards f
        LEFT JOIN user_flashcards uf ON f.id = uf.flashcard_id AND uf.user_id = $1
        WHERE (to_tsvector('simple', f.section) @@ plainto_tsquery('simple', $2) OR $2 = '')
-       AND (LOWER(f.section_type) = LOWER($3) OR $3 = '')
+       AND (f.flashcard_type = $3 OR $3 = '')
        AND (LOWER(f.source_file) = LOWER($4) OR $4 = '')
        AND (f.categories @> $5 OR $5 = '{}')
        AND ($6 = false OR COALESCE(uf.status, '') != 'mastered')
@@ -356,7 +423,7 @@ func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile st
 		query,
 		userID,
 		section,
-		sectionType,
+		qType,
 		sourceFile,
 		pq.Array(categories),
 		hideMastered,
@@ -376,20 +443,10 @@ func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile st
 		var contentJSON []byte
 
 		err := rows.Scan(
-			&totalRecords,
-			&flashcard.ID,
-			&flashcard.Section,
-			&flashcard.SectionType,
-			&flashcard.SourceFile,
-			&flashcard.Text,
-			&flashcard.Question,
-			&flashcard.Type,
-			&contentJSON,
-			pq.Array(&flashcard.Categories),
-			&flashcard.Version,
-			&flashcard.CreatedAt,
-			&flashcard.CorrectCount,
-			&flashcard.Status,
+			&totalRecords, &flashcard.ID, &flashcard.Section, &flashcard.SectionType,
+			&flashcard.SourceFile, &flashcard.Text, &flashcard.Question, &flashcard.Type,
+			&contentJSON, pq.Array(&flashcard.Categories), &flashcard.Version,
+			&flashcard.CreatedAt, &flashcard.CorrectCount, &flashcard.Status,
 		)
 		if err != nil {
 			return nil, Metadata{}, err
@@ -426,7 +483,6 @@ func (m FlashcardModel) GetAll(userID int64, section, sectionType, sourceFile st
 	}
 
 	metadata := calculateMetadata(totalRecords, filters.Page, filters.PageSize)
-
 	return flashcards, metadata, nil
 }
 
@@ -466,38 +522,4 @@ func (m FlashcardModel) ResetCorrectCount(id int64, userID int64) error {
 
 	_, err := m.DB.ExecContext(ctx, query, userID, id)
 	return err
-}
-
-func (m FlashcardModel) GetAllCategories(userID int64, hideMastered bool) ([]*Category, error) {
-	query := `
-        SELECT category, COUNT(*)
-        FROM (
-            SELECT unnest(f.categories) AS category
-            FROM flashcards f
-            INNER JOIN user_flashcards uf ON f.id = uf.flashcard_id
-            WHERE uf.user_id = $1 
-            AND ($2 = false OR COALESCE(uf.status, '') != 'mastered')
-        ) AS expanded
-        GROUP BY category
-        ORDER BY category ASC`
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	rows, err := m.DB.QueryContext(ctx, query, userID, hideMastered)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var categories []*Category
-	for rows.Next() {
-		var c Category
-		if err := rows.Scan(&c.Name, &c.Count); err != nil {
-			return nil, err
-		}
-		categories = append(categories, &c)
-	}
-
-	return categories, nil
 }
