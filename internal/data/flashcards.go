@@ -234,20 +234,19 @@ func (m FlashcardModel) GetFilterMetadata(userID int64, file string, qType strin
             'sections', (
 				SELECT coalesce(jsonb_agg(section_name), '[]')
 				FROM (
-					SELECT DISTINCT 
-					f.section as section_name,
-					CASE 
-						WHEN f.section ~ '\d' THEN 
-							(substring(f.section from '\d+'))::int 
-						ELSE 0 
-					END as sort_weight
-					FROM flashcards f
-					INNER JOIN user_flashcards uf ON f.id = uf.flashcard_id
-					WHERE uf.user_id = $1 
-					AND f.source_file = $2
-					AND ($4 = '' OR f.flashcard_type = $4)
-					AND f.section IS NOT NULL
-					ORDER BY sort_weight, section_name
+				   SELECT DISTINCT 
+				   f.section as section_name,
+				   (
+					 SELECT array_agg(n[1]::int)
+					 FROM regexp_matches(f.section, '\d+', 'g') n
+				   ) as sort_array
+				   FROM flashcards f
+				   INNER JOIN user_flashcards uf ON f.id = uf.flashcard_id
+				   WHERE uf.user_id = $1 
+				   AND f.source_file = $2
+				   AND ($4 = '' OR f.flashcard_type = $4)
+				   AND f.section IS NOT NULL
+				   ORDER BY sort_array, section_name
 				) s
 			),
             'categories', (
